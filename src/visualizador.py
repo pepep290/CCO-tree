@@ -45,6 +45,7 @@ AJUDA = (
     "7         cor por raio: liga / desliga\n"
     "8         zera translação, rotação e escala\n"
     "9         imprime as matrizes M, V, P no terminal\n"
+    "F2        antialiasing (supersampling): liga / desliga\n"
     "F1        mostra / esconde esta ajuda\n"
     "mouse     esq: gira  dir/roda: zoom  meio: move"
 )
@@ -100,6 +101,7 @@ class App:
         self.nome_tubo = nome_raio + ("_pt" if onde == "cell" else "")
         self.modo = args.modo
         self.cor_ligada = True
+        self.aa = False
         self.pl = None
         self.ator_linhas = self.ator_tubos = None
         self.txt_ajuda = None
@@ -179,12 +181,27 @@ class App:
         if c.ortografica:
             self.pl.camera.parallel_scale = c.dist * np.tan(np.radians(FOVY) / 2)
         self.pl.reset_camera_clipping_range()
-        proj = "ortográfica" if c.ortografica else "perspectiva"
-        self.pl.add_text(f"vista {NOMES_VISTA[c.vista]}  -  projeção {proj}", name="hud",
-                         position="lower_edge", font_size=10, color=self.tema["texto"])
+        self._hud()
         self.pl.render()
 
+    def _hud(self):
+        c = self.cena
+        proj = "ortográfica" if c.ortografica else "perspectiva"
+        aa = "ligado (SSAA)" if self.aa else "desligado"
+        self.pl.add_text(
+            f"vista {NOMES_VISTA[c.vista]}  -  projeção {proj}  -  antialiasing {aa}",
+            name="hud", position="lower_edge", font_size=10, color=self.tema["texto"])
+
     # ------------------------------------------------------------------ ações
+    def alternar_aa(self):
+        self.aa = not self.aa
+        if self.aa:
+            self.pl.enable_anti_aliasing("ssaa")
+        else:
+            self.pl.disable_anti_aliasing()
+        self._hud()
+        self.pl.render()
+
     def mudar_vista(self, nome):
         self.cena.vista = nome
         self.atualizar_camera()
@@ -263,6 +280,7 @@ class App:
         self.pl.add_key_event("8", self.zerar)
         self.pl.add_key_event("9", self.imprimir_matrizes)
         self.pl.add_key_event("F1", self.alternar_ajuda)
+        self.pl.add_key_event("F2", self.alternar_aa)
 
     def _slider(self, cb, faixa, inicial, titulo, y):
         kw = dict(value=inicial, title=titulo, pointa=(0.03, y), pointb=(0.24, y),
