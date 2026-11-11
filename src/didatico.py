@@ -22,6 +22,11 @@ Recorte de segmentos (Cohen–Sutherland, Liang–Barsky, Cyrus–Beck):
     python src/didatico.py recorte                      # exemplo numérico + cena de teste
     python src/didatico.py recorte --arvore data/dados_modelos2D/tree2D_Nterm008.vtk
     python src/didatico.py recorte --arvore ARQ.vtk --janela 0.25 0.25 0.75 0.75 --salvar figs/
+
+Recorte de polígonos (Sutherland–Hodgman):
+    python src/didatico.py recorte-poligonos            # passo a passo + caso côncavo
+    python src/didatico.py recorte-poligonos --arvore data/dados_modelos2D/tree2D_Nterm008.vtk
+    python src/didatico.py recorte-poligonos --arvore ARQ.vtk --janela 0.25 0.25 0.75 0.75 --salvar figs/
 """
 import argparse
 import os
@@ -526,6 +531,169 @@ def fig_recorte_arvore(args):
     return fig
 
 
+# ----------------------------------------------- recorte de polígonos (S-H)
+POLI_CONVEXO = [(1, 2), (9, 0), (13, 6), (8, 11), (2, 9)]
+JANELA_CONVEXO = (3, 3, 11, 8)
+POLI_U = [(1, 1), (17, 1), (17, 12), (12, 12), (12, 5), (6, 5), (6, 12), (1, 12)]
+JANELA_U = (2, 6, 16, 10)
+
+
+def _nome_borda(a, b):
+    if a[1] == b[1]:
+        return "base" if b[0] > a[0] else "topo"
+    return "direita" if b[1] > a[1] else "esquerda"
+
+
+def _fmt_poli(p):
+    return "[" + ", ".join(f"({x:g}, {y:g})" for x, y in p) + "]"
+
+
+def imprimir_sh(sujeito, janela):
+    etapas = []
+    res = C.sutherland_hodgman(sujeito, C.janela_como_poligono(janela), etapas)
+    print(f"\nSutherland–Hodgman: polígono {_fmt_poli(sujeito)}")
+    print(f"janela x[{janela[0]}, {janela[2]}] y[{janela[1]}, {janela[3]}]")
+    for (a, b), verts in etapas:
+        print(f"  contra a borda {_nome_borda(a, b):<9}: {len(verts)} vértices  "
+              f"{_fmt_poli(verts)}")
+    print(f"  área antes: {C.area_poligono_f(sujeito):g}  |  depois: "
+          f"{C.area_poligono_f(res):g}")
+    return etapas, res
+
+
+def _grade_preenchida(ax, poli, w, h, cor="#7fb2e5"):
+    """Preenche (com o nosso Scanline) o polígono, vértices arredondados."""
+    pix = R.scanline_fill([(round(x), round(y)) for x, y in poli])
+    img = np.zeros((h, w, 4))
+    rgba = matplotlib_cor(cor)
+    for x, y in pix:
+        if 0 <= x < w and 0 <= y < h:
+            img[y, x] = rgba
+    ax.imshow(img, origin="lower", extent=(-0.5, w - 0.5, -0.5, h - 0.5),
+              interpolation="nearest")
+
+
+def matplotlib_cor(cor):
+    from matplotlib.colors import to_rgba
+    return to_rgba(cor, 0.75)
+
+
+def _fechar(p):
+    return [q[0] for q in p] + [p[0][0]], [q[1] for q in p] + [p[0][1]]
+
+
+def fig_sh_passos():
+    import matplotlib.pyplot as plt
+    etapas, res = imprimir_sh(POLI_CONVEXO, JANELA_CONVEXO)
+    fig, eixos = plt.subplots(2, 3, figsize=(14, 8.5), sharex=True, sharey=True)
+    paineis = [("Polígono original", POLI_CONVEXO)]
+    for (a, b), verts in etapas:
+        paineis.append((f"Depois da borda {_nome_borda(a, b)}", verts))
+    for ax, (tit, poli) in zip(eixos.flat, paineis):
+        _janela_patch(ax, JANELA_CONVEXO)
+        if poli:
+            fx, fy = _fechar(poli)
+            ax.plot(fx, fy, "-o", color="#1565c0", lw=2, ms=4)
+        ax.set_title(tit, fontsize=10)
+        ax.set_aspect("equal")
+        ax.grid(alpha=0.25)
+    ax = eixos.flat[5]
+    _janela_patch(ax, JANELA_CONVEXO)
+    _grade_preenchida(ax, res, 15, 13)
+    fx, fy = _fechar(res)
+    ax.plot(fx, fy, "-o", color="#1565c0", lw=1.5, ms=4)
+    ax.set_title("Scanline Fill do resultado (pixel centrado no inteiro)", fontsize=10)
+    ax.set_xlim(-1, 15)
+    ax.set_ylim(-1, 13)
+    ax.set_aspect("equal")
+    fig.tight_layout()
+    return fig
+
+
+def fig_sh_concavo():
+    import matplotlib.pyplot as plt
+    etapas, res = imprimir_sh(POLI_U, JANELA_U)
+    pontes = {frozenset(t) for t in C.trechos_degenerados(res)}
+    print(f"  trechos degenerados (arestas sobrepostas): "
+          f"{[tuple(sorted(t)) for t in pontes]}")
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5.4), sharex=True, sharey=True)
+    fx, fy = _fechar(POLI_U)
+    a1.plot(fx, fy, "-o", color="#455a64", lw=2, ms=4)
+    _janela_patch(a1, JANELA_U)
+    a1.set_title("Polígono côncavo (em U) e janela de recorte")
+
+    _grade_preenchida(a2, res, 19, 14)
+    _janela_patch(a2, JANELA_U)
+    fx, fy = _fechar(res)
+    a2.plot(fx, fy, "-o", color="#1565c0", lw=1.8, ms=4)
+    for t in pontes:
+        (xa, ya), (xb, yb) = tuple(t)
+        a2.plot([xa, xb], [ya + 0.12, yb + 0.12], color="#c62828", lw=3)
+    a2.set_title("Sutherland–Hodgman: 1 polígono só, com aresta degenerada "
+                 "(vermelho); preenchido com Scanline", fontsize=10)
+    for a in (a1, a2):
+        a.set_xlim(-1, 19)
+        a.set_ylim(-1, 14)
+        a.set_aspect("equal")
+        a.grid(alpha=0.25)
+    fig.tight_layout()
+    return fig
+
+
+def fig_sh_arvore(args):
+    """Polígono (estrela côncava) recortado pela janela sobre a árvore."""
+    import matplotlib.pyplot as plt
+    malha = md.carregar_modelo(args.arvore)
+    nome_raio, onde = md.achar_raio(malha)
+    if nome_raio is None:
+        sys.exit("Não achei o atributo de raio no arquivo.")
+    plano = abs(malha.bounds[5] - malha.bounds[4]) < 1e-12
+    vista = args.vista or ("frontal" if plano else "isometrica")
+    L = A = args.tamanho
+    V, P = R.matrizes_ortograficas(malha, vista, L, A)
+    fb, _, _ = R.rasterizar_modelo(malha, nome_raio, onde, np.eye(4), V, P, L, A)
+
+    fx0, fy0, fx1, fy1 = args.janela
+    janela = (fx0 * L, fy0 * A, fx1 * L, fy1 * A)
+    cx, cy = L / 2, A / 2
+    estrela = []
+    for i in range(10):                       # estrela de 5 pontas (côncava)
+        rr = (0.46 if i % 2 == 0 else 0.20) * L
+        a = np.radians(-90 + 36 * i)
+        estrela.append((cx + rr * np.cos(a), cy + rr * np.sin(a)))
+    res = C.sutherland_hodgman(estrela, C.janela_como_poligono(janela))
+    print(f"\nPolígono (estrela) sobre a árvore {L}x{A}, janela "
+          f"x[{janela[0]:.0f}, {janela[2]:.0f}] y[{janela[1]:.0f}, {janela[3]:.0f}]")
+    print(f"  vértices: {len(estrela)} -> {len(res)} | área "
+          f"{C.area_poligono_f(estrela):.0f} -> {C.area_poligono_f(res):.0f} px²")
+
+    sobre = fb.astype(float).copy()
+    cor = np.array([66, 133, 244], dtype=float)
+    pix = R.scanline_fill([(round(x), round(y)) for x, y in res])
+    for x, y in pix:
+        if 0 <= x < L and 0 <= y < A:
+            sobre[y, x] = 0.6 * sobre[y, x] + 0.4 * cor
+    n = len(res)
+    for i in range(n):
+        p0 = tuple(int(round(v)) for v in res[i])
+        p1 = tuple(int(round(v)) for v in res[(i + 1) % n])
+        R.desenhar_pixels(sobre, R.bresenham(*p0, *p1), (20, 60, 160))
+
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 7))
+    a1.imshow(fb, interpolation="nearest")
+    fx, fy = _fechar(estrela)
+    a1.plot(fx, fy, color="#ef6c00", lw=1.5)
+    _janela_patch(a1, janela)
+    a1.set_title("Antes: polígono (laranja) e janela de recorte (roxo)")
+    a2.imshow(sobre.astype(np.uint8), interpolation="nearest")
+    _janela_patch(a2, janela)
+    a2.set_title("Depois: Sutherland–Hodgman + Scanline Fill + Bresenham")
+    for a in (a1, a2):
+        a.axis("off")
+    fig.tight_layout()
+    return fig
+
+
 # --------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -536,6 +704,14 @@ def main():
     b.add_argument("--interativo", action="store_true")
     p = sub.add_parser("poligonos", help="preenchimento de polígonos (Scanline Fill)")
     q = sub.add_parser("antialiasing", help="aliasing x supersampling")
+    rp = sub.add_parser("recorte-poligonos", help="recorte de polígonos (Sutherland–Hodgman)")
+    rp.add_argument("--arvore", default=None, metavar="ARQ.vtk")
+    rp.add_argument("--vista", choices=list(T.VISTAS), default=None)
+    rp.add_argument("--tamanho", type=int, default=300)
+    rp.add_argument("--janela", type=float, nargs=4, default=[0.30, 0.30, 0.70, 0.70],
+                    metavar=("X0", "Y0", "X1", "Y1"),
+                    help="janela de recorte, em frações da imagem (0 a 1)")
+    rp.add_argument("--salvar", default=None, metavar="PASTA")
     r = sub.add_parser("recorte", help="recorte de segmentos de reta")
     r.add_argument("--arvore", default=None, metavar="ARQ.vtk")
     r.add_argument("--vista", choices=list(T.VISTAS), default=None)
@@ -573,6 +749,11 @@ def main():
         figuras = {"bresenham_octantes": fig_octantes(), "bresenham_exemplo": fig_exemplo()}
         if args.arvore:
             figuras["bresenham_arvore"] = demo_arvore(args)
+    elif args.demo == "recorte-poligonos":
+        figuras = {"recorte_poligono_passos": fig_sh_passos(),
+                   "recorte_poligono_concavo": fig_sh_concavo()}
+        if args.arvore:
+            figuras["recorte_poligono_arvore"] = fig_sh_arvore(args)
     elif args.demo == "recorte":
         imprimir_exemplo_recorte()
         figuras = {"recorte_teste": fig_recorte_teste()}

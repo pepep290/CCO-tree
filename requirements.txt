@@ -1,0 +1,7 @@
+# Dependências do TP1 (BCC327). Testado com Python 3.14.3.
+numpy==2.4.4
+pyvista==0.49.2
+vtk==9.7.2
+matplotlib==3.10.8
+PyQt5==5.15.11
+pyvistaqt==0.13.2

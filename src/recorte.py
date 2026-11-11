@@ -5,6 +5,7 @@ TP1 - BCC327 - Recorte de segmentos de reta (implementação própria).
   - liang_barsky:     o segundo algoritmo implementado. Forma paramétrica.
   - cyrus_beck:       implementado só como terceiro termo de comparação e
                       validação; funciona para qualquer janela convexa.
+  - sutherland_hodgman: recorte de POLÍGONOS contra janela convexa (Módulo 7).
 
 Convenção: janela retangular (xmin, ymin, xmax, ymax), bordas incluídas.
 Cada função devolve (x0, y0, x1, y1) do trecho visível ou None.
@@ -169,6 +170,137 @@ def janela_como_poligono(janela):
     return [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
 
 
+# ------------------------------------------------------ Sutherland–Hodgman
+# Recorte de polígonos: o polígono é recortado contra UMA aresta da janela por
+# vez (a saída de uma etapa é a entrada da seguinte). Para cada aresta do
+# sujeito (s -> e), há 4 casos:
+#     s dentro, e dentro  -> emite e
+#     s dentro, e fora    -> emite a interseção
+#     s fora,   e dentro  -> emite a interseção e depois e
+#     s fora,   e fora    -> não emite nada
+# Vale para janela CONVEXA e polígono sujeito qualquer. Se o sujeito é côncavo
+# e o resultado deveria ter várias partes separadas, o algoritmo as liga por
+# arestas degeneradas (sobre a borda da janela). O Weiler–Atherton evita isso.
+def _orientacao(poligono):
+    n = len(poligono)
+    a2 = sum(poligono[i][0] * poligono[(i + 1) % n][1]
+             - poligono[(i + 1) % n][0] * poligono[i][1] for i in range(n))
+    return 1 if a2 > 0 else -1
+
+
+def _lado(p, a, b):
+    """> 0 se p está à esquerda da aresta a->b."""
+    return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+
+
+def _intersecao_retas(p, q, a, b):
+    """Ponto onde a reta p-q cruza a reta a-b (supõe que não são paralelas)."""
+    x1, y1, x2, y2 = p[0], p[1], q[0], q[1]
+    x3, y3, x4, y4 = a[0], a[1], b[0], b[1]
+    den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
+    return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+
+
+def sutherland_hodgman(sujeito, janela, etapas=None):
+    """Recorta o polígono 'sujeito' (lista de vértices) contra a janela
+    convexa 'janela' (lista de vértices, qualquer orientação).
+    'etapas' (lista) recebe, após cada aresta da janela, ((a, b), vértices)."""
+    sinal = _orientacao(janela)
+    saida = [tuple(p) for p in sujeito]
+    n = len(janela)
+    for i in range(n):
+        a, b = janela[i], janela[(i + 1) % n]
+        entrada, saida = saida, []
+        if not entrada:
+            if etapas is not None:
+                etapas.append(((a, b), []))
+            continue
+
+        def dentro(p):
+            return _lado(p, a, b) * sinal >= 0
+
+        s = entrada[-1]
+        for e in entrada:
+            if dentro(e):
+                if not dentro(s):
+                    saida.append(_intersecao_retas(s, e, a, b))
+                saida.append(e)
+            elif dentro(s):
+                saida.append(_intersecao_retas(s, e, a, b))
+            s = e
+        saida = _sem_repetidos(saida)
+        if etapas is not None:
+            etapas.append(((a, b), list(saida)))
+    return saida
+
+
+def _sem_repetidos(lista, tol=1e-12):
+    """Tira vértices consecutivos iguais (surgem quando a interseção cai
+    exatamente num vértice ou num canto da janela)."""
+    if not lista:
+        return lista
+    out = [lista[0]]
+    for p in lista[1:]:
+        if abs(p[0] - out[-1][0]) > tol or abs(p[1] - out[-1][1]) > tol:
+            out.append(p)
+    if len(out) > 1 and abs(out[0][0] - out[-1][0]) <= tol \
+            and abs(out[0][1] - out[-1][1]) <= tol:
+        out.pop()
+    return out
+
+
+def trechos_degenerados(poligono, tol=1e-9):
+    """Trechos em que duas arestas do polígono se sobrepõem em sentidos
+    opostos (as 'pontes' de largura zero do Sutherland–Hodgman)."""
+    n = len(poligono)
+    arestas = [(poligono[i], poligono[(i + 1) % n]) for i in range(n)]
+    achados = []
+    for i in range(n):
+        p1, p2 = arestas[i]
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        d2 = dx * dx + dy * dy
+        if d2 == 0:
+            continue
+        for j in range(n):
+            if j == i:
+                continue
+            q1, q2 = arestas[j]
+            ex, ey = q2[0] - q1[0], q2[1] - q1[1]
+            if dx * ex + dy * ey >= 0:
+                continue                      # mesmo sentido
+            c1 = dx * (q1[1] - p1[1]) - dy * (q1[0] - p1[0])
+            c2 = dx * (q2[1] - p1[1]) - dy * (q2[0] - p1[0])
+            if abs(c1) > tol * (1 + d2) or abs(c2) > tol * (1 + d2):
+                continue                      # não colineares
+            t1 = ((q1[0] - p1[0]) * dx + (q1[1] - p1[1]) * dy) / d2
+            t2 = ((q2[0] - p1[0]) * dx + (q2[1] - p1[1]) * dy) / d2
+            lo, hi = max(0.0, min(t1, t2)), min(1.0, max(t1, t2))
+            if hi - lo > 1e-9:
+                achados.append(((p1[0] + lo * dx, p1[1] + lo * dy),
+                                (p1[0] + hi * dx, p1[1] + hi * dy)))
+    return achados
+
+
+def area_poligono_f(poligono):
+    n = len(poligono)
+    return abs(sum(poligono[i][0] * poligono[(i + 1) % n][1]
+                   - poligono[(i + 1) % n][0] * poligono[i][1]
+                   for i in range(n))) / 2
+
+
+def _par_impar(poligono, x, y):
+    """Teste par-ímpar em ponto flutuante (usado só para validar)."""
+    dentro = False
+    n = len(poligono)
+    for i in range(n):
+        (xa, ya), (xb, yb) = poligono[i], poligono[(i + 1) % n]
+        if (ya <= y < yb) or (yb <= y < ya):
+            if xa + (y - ya) * (xb - xa) / (yb - ya) > x:
+                dentro = not dentro
+    return dentro
+
+
 # ------------------------------------------------------------- auto-teste
 def _iguais(a, b, tol=1e-7):
     if a is None or b is None:
@@ -209,6 +341,35 @@ def _testes(n=20000, seed=3):
           f"Cyrus–Beck concordam; trechos ficam dentro da janela e sobre a reta.")
     print("Casos (Cohen–Sutherland):",
           ", ".join(f"{k}={v}" for k, v in cont.items()))
+
+    # --- Sutherland–Hodgman: polígonos estrelados (em geral côncavos) contra
+    # janelas retangulares. O ponto está no resultado <=> está no sujeito E na
+    # janela (pontos amostrados ao acaso; o par-ímpar ignora as arestas
+    # degeneradas que o SH cria quando o resultado tem partes separadas).
+    import math
+    npoly = 600
+    for _ in range(npoly):
+        k = rng.randint(3, 10)
+        ang = sorted(rng.uniform(0, 2 * math.pi) for _ in range(k))
+        suj = [(rng.uniform(-3, 3) + (10 + rng.uniform(4, 14)) * math.cos(a),
+                (10 + rng.uniform(4, 14)) * math.sin(a)) for a in ang]
+        xa, xb = sorted(rng.uniform(-18, 18) for _ in range(2))
+        ya, yb = sorted(rng.uniform(-18, 18) for _ in range(2))
+        if xb - xa < 2 or yb - ya < 2:
+            continue
+        res = sutherland_hodgman(suj, janela_como_poligono((xa, ya, xb, yb)))
+        for _ in range(60):
+            x, y = rng.uniform(-25, 30), rng.uniform(-25, 25)
+            esperado = (xa <= x <= xb and ya <= y <= yb
+                        and _par_impar(suj, x, y))
+            obtido = len(res) >= 3 and _par_impar(res, x, y)
+            assert esperado == obtido, f"SH errado: {suj} {(xa, ya, xb, yb)} ({x},{y})"
+    print(f"Sutherland–Hodgman: {npoly} polígonos (côncavos incluídos) contra "
+          f"janelas aleatórias, 60 pontos cada: região resultante correta.")
+    q = [(0, 0), (4, 0), (4, 4), (0, 4)]
+    assert abs(area_poligono_f(sutherland_hodgman(q, janela_como_poligono((2, 2, 6, 6)))) - 4) < 1e-9
+    assert sutherland_hodgman(q, janela_como_poligono((10, 10, 12, 12))) == []
+    print("Quadrado 4x4 contra janela (2,2)-(6,6): área 4; janela disjunta: vazio.")
 
 
 if __name__ == "__main__":
